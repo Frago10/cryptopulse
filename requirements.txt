@@ -1,0 +1,57 @@
+# =============================================================================
+# CryptoPulse — Dependencias de desarrollo local
+# Instalación: make install   (o: pip install -r requirements.txt)
+# =============================================================================
+
+# ---- Core ----
+python-dotenv==1.0.1
+pydantic==2.7.4
+pydantic-settings==2.3.4
+structlog==24.1.0
+
+# ---- Data ----
+pandas==2.2.2
+pyarrow==16.1.0
+numpy==1.26.4
+
+# ---- Ingesta ----
+requests==2.32.3
+websockets==12.0
+praw==7.7.1            # Reddit API
+python-binance==1.0.19 # cliente oficial de Binance (opcional)
+
+# ---- Streaming ----
+confluent-kafka==2.4.0
+
+# ---- Storage ----
+boto3==1.34.80         # MinIO S3-compatible
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.30
+asyncpg==0.29.0        # para inserts de alto throughput
+
+# ---- Transformación ----
+dbt-core==1.7.17
+dbt-postgres==1.7.17
+
+# ---- ML ----
+scikit-learn==1.5.0
+vaderSentiment==3.3.2
+joblib==1.4.2
+# Opcional para bonus: transformers==4.41.2 ; torch==2.3.0
+
+# ---- Calidad de datos ----
+great-expectations==0.18.15
+
+# ---- Dashboard ----
+streamlit==1.35.0
+plotly==5.22.0
+
+# ---- Alertas ----
+python-telegram-bot==21.3
+
+# ---- Dev ----
+pytest==8.2.2
+pytest-asyncio==0.23.7
+ruff==0.4.9
+black==24.4.2
+pre-commit==3.7.1

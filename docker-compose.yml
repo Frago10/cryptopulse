@@ -1,0 +1,199 @@
+## CryptoPulse — Infraestructura local completa
+## Levanta: Postgres, MinIO (S3 local), Redpanda (Kafka), Redpanda Console, Airflow
+## Uso: docker compose up -d
+##
+## Servicios y puertos expuestos:
+##   postgres          -> localhost:5432
+##   minio (API)       -> localhost:9000
+##   minio (Console)   -> localhost:9001
+##   redpanda          -> localhost:9092 (kafka API)
+##   redpanda console  -> localhost:8080
+##   airflow web       -> localhost:8081
+
+name: cryptopulse
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.3-python3.11
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2oasOM1Pg=}
+    _PIP_ADDITIONAL_REQUIREMENTS: >-
+      apache-airflow-providers-postgres==5.11.1
+      boto3==1.34.80
+      pandas==2.2.2
+      pyarrow==16.1.0
+      requests==2.32.3
+      praw==7.7.1
+      confluent-kafka==2.4.0
+      dbt-postgres==1.7.17
+      scikit-learn==1.5.0
+      vaderSentiment==3.3.2
+      great-expectations==0.18.15
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ./ingestion:/opt/airflow/ingestion
+    - ./dbt_project:/opt/airflow/dbt_project
+    - ./ml:/opt/airflow/ml
+    - ./quality:/opt/airflow/quality
+  depends_on: &airflow-common-depends
+    postgres:
+      condition: service_healthy
+
+services:
+  # -----------------------------------------------------------------
+  # Data warehouse
+  # -----------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: cryptopulse_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./ingestion/sql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # -----------------------------------------------------------------
+  # Data lake (S3-compatible) para la capa BRONZE
+  # -----------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: cryptopulse_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Web console
+    volumes:
+      - ./data/minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Crea los buckets bronze, silver y gold al arrancar
+  minio-init:
+    image: minio/mc:latest
+    container_name: cryptopulse_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+      mc mb -p local/bronze || true;
+      mc mb -p local/silver || true;
+      mc mb -p local/gold || true;
+      mc anonymous set download local/bronze;
+      echo 'Buckets creados: bronze, silver, gold';
+      exit 0;
+      "
+
+  # -----------------------------------------------------------------
+  # Streaming (Kafka-compatible)
+  # -----------------------------------------------------------------
+  redpanda:
+    image: redpandadata/redpanda:v24.1.8
+    container_name: cryptopulse_redpanda
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:29092,EXTERNAL://localhost:9092
+      - --pandaproxy-addr=0.0.0.0:8082
+      - --advertise-pandaproxy-addr=localhost:8082
+    ports:
+      - "9092:9092"
+      - "8082:8082"
+      - "9644:9644"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redpanda-console:
+    image: redpandadata/console:v2.6.1
+    container_name: cryptopulse_redpanda_console
+    restart: unless-stopped
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+    ports:
+      - "8080:8080"
+
+  # -----------------------------------------------------------------
+  # Orquestador
+  # -----------------------------------------------------------------
+  airflow-init:
+    <<: *airflow-common
+    container_name: cryptopulse_airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create --role Admin --username admin --password admin \
+          --email admin@cryptopulse.local --firstname Admin --lastname Admin || true
+        echo "Airflow inicializado."
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: cryptopulse_airflow_web
+    restart: unless-stopped
+    command: webserver
+    ports:
+      - "8081:8080"
+    depends_on:
+      <<: *airflow-common-depends
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: cryptopulse_airflow_scheduler
+    restart: unless-stopped
+    command: scheduler
+    depends_on:
+      <<: *airflow-common-depends
+      airflow-init:
+        condition: service_completed_successfully
+
+networks:
+  default:
+    name: cryptopulse_net

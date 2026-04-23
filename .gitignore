@@ -1,0 +1,90 @@
+# -------- Python --------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# -------- Virtualenvs --------
+.venv/
+venv/
+env/
+.env.local
+
+# -------- Secrets / env --------
+.env
+*.pem
+*.key
+credentials.json
+
+# -------- IDE --------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# -------- Jupyter --------
+.ipynb_checkpoints/
+
+# -------- Data (mucho peso, no subir) --------
+data/
+*.parquet
+*.csv
+*.tsv
+*.db
+*.sqlite
+
+# -------- dbt --------
+dbt_project/target/
+dbt_project/dbt_packages/
+dbt_project/logs/
+dbt_project/.user.yml
+
+# -------- Airflow --------
+airflow/logs/
+airflow/plugins/__pycache__/
+
+# -------- MinIO local data --------
+data/minio/
+
+# -------- Postgres local data --------
+data/postgres/
+
+# -------- ML artifacts (opcional: versionar con DVC en vez de git) --------
+ml/models/*.joblib
+ml/models/*.pkl
+mlruns/
+
+# -------- Logs --------
+*.log
+logs/
+
+# -------- OS --------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# -------- Power BI (temporal / cache) --------
+*.pbix.tmp
+
+# -------- Great Expectations --------
+quality/great_expectations/uncommitted/
