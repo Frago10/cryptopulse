@@ -20,6 +20,27 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2oasOM1Pg=}
+    # ---- App env vars (para que los modulos Python resuelvan hosts Docker) ----
+    POSTGRES_USER: ${POSTGRES_USER}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    POSTGRES_DB: ${POSTGRES_DB}
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: '5432'
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    MINIO_ENDPOINT: http://minio:9000
+    KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
+    REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
+    REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
+    REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-cryptopulse/0.1}
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    # Paths + dbt
+    PYTHONPATH: /opt/airflow
+    DBT_PROFILES_DIR: /opt/airflow/dbt_project
+    DBT_MARTS_SCHEMA: analytics_marts
+    # Airflow Connection para el hook Postgres (DAG streaming_health)
+    AIRFLOW_CONN_CRYPTOPULSE_PG: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     _PIP_ADDITIONAL_REQUIREMENTS: >-
       apache-airflow-providers-postgres==5.11.1
       boto3==1.34.80
@@ -32,6 +53,9 @@ x-airflow-common: &airflow-common
       scikit-learn==1.5.0
       vaderSentiment==3.3.2
       great-expectations==0.18.15
+      pydantic==2.7.4
+      pydantic-settings==2.3.4
+      structlog==24.1.0
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs

@@ -1,0 +1,115 @@
+# =============================================================================
+# Sources (bronze -> staging)
+#
+# Declaramos las tablas de `raw` que pobla la ingestión para que dbt:
+#   1. pueda hacer `ref` transitivo con lineage ({{ source('...') }})
+#   2. pueda correr tests de frescura con `freshness` (`dbt source freshness`)
+#   3. genere documentación navegable
+# =============================================================================
+version: 2
+
+sources:
+  - name: raw
+    description: "Landing zone — datos recién ingestados sin transformar."
+    database: cryptopulse
+    schema: raw
+    # Frescura por defecto para todas las tablas que no overrideen
+    freshness:
+      warn_after: { count: 2, period: hour }
+      error_after: { count: 24, period: hour }
+    loaded_at_field: ingested_at
+
+    tables:
+      # -------- Streaming (Binance -> Redpanda -> Postgres) --------
+      - name: ticks
+        description: "Ticks en tiempo real desde Binance (ticker 24hr)."
+        freshness:
+          warn_after: { count: 5, period: minute }
+          error_after: { count: 30, period: minute }
+        loaded_at_field: event_time
+        columns:
+          - name: symbol
+            description: "Símbolo Binance, e.g. BTCUSDT"
+            tests: [not_null]
+          - name: event_time
+            description: "Timestamp del evento (UTC)"
+            tests: [not_null]
+          - name: price
+            description: "Precio en USDT (col `c` de Binance)"
+            tests: [not_null]
+
+      # -------- Batch hourly (CoinGecko /coins/markets) --------
+      - name: coingecko_markets
+        description: "Snapshots horarios de market data (top 100)."
+        columns:
+          - name: id
+            description: "CoinGecko coin id (bitcoin, ethereum, ...)"
+            tests: [not_null]
+          - name: symbol
+            tests: [not_null]
+          - name: current_price
+            description: "Precio USD al momento del snapshot"
+          - name: market_cap_rank
+          - name: ingested_at
+            tests: [not_null]
+
+      # -------- Batch daily (alternative.me FNG) --------
+      - name: fear_greed_index
+        description: "Fear & Greed Index histórico (últimos 30 días)."
+        freshness:
+          warn_after: { count: 26, period: hour }
+          error_after: { count: 48, period: hour }
+        columns:
+          - name: index_date
+            tests: [not_null, unique]
+          - name: value
+            tests: [not_null]
+          - name: category
+
+      # -------- Batch (Reddit PRAW) --------
+      - name: reddit_posts
+        description: "Posts recientes de subreddits cripto."
+        columns:
+          - name: id
+            tests: [not_null, unique]
+          - name: subreddit
+            tests: [not_null]
+          - name: created_utc
+            tests: [not_null]
+
+  # ===========================================================================
+  # ML outputs (Fase 5) — escritos por los jobs en `ml/`
+  # ===========================================================================
+  - name: ml
+    description: "Outputs de los modelos de ML (sentiment + anomalías)."
+    database: cryptopulse
+    schema: ml
+    loaded_at_field: scored_at
+    freshness:
+      warn_after: { count: 6, period: hour }
+      error_after: { count: 48, period: hour }
+
+    tables:
+      - name: reddit_sentiment
+        description: "VADER polarity scores por post de Reddit."
+        columns:
+          - name: post_id
+            tests: [not_null, unique]
+          - name: compound
+            tests: [not_null]
+          - name: sentiment_label
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['positive', 'neutral', 'negative']
+
+      - name: price_anomalies
+        description: "Rolling z-score + IsolationForest por (symbol, event_hour)."
+        loaded_at_field: detected_at
+        columns:
+          - name: symbol
+            tests: [not_null]
+          - name: event_hour
+            tests: [not_null]
+          - name: is_anomaly_consensus
+            tests: [not_null]

@@ -1,0 +1,17 @@
+# =============================================================================
+# CryptoPulse — Dependencias para Fase 2 (streaming Binance -> Redpanda -> PG)
+#
+# Se agrega A LO YA INSTALADO en requirements-batch.txt.
+#   pip install -r requirements-stream.txt
+# =============================================================================
+
+# WebSocket client (pure Python, sin compilación)
+websockets==12.0
+
+# Kafka/Redpanda client — confluent-kafka tiene wheels precompilados para cp311
+confluent-kafka==2.4.0
+
+# Postgres driver
+psycopg2-binary==2.9.9
+
+# Signal handling (ya en stdlib, solo anotando)

@@ -1,0 +1,273 @@
+// =============================================================================
+// measures.dax — Medidas DAX para CryptoPulse
+// =============================================================================
+// Como usar:
+//   En Power BI Desktop: panel "Fields" -> click derecho en la tabla destino
+//   -> "New measure" -> pegar el codigo (sin el nombre; el "NombreMedida =" ya
+//   lo lleva incluido).
+//
+// Convenciones:
+//   * Medidas de conteo/ratio: en la tabla "KPI_Latest" (es el hub logico).
+//   * Medidas de precio/volatilidad: en la tabla "PriceHourly".
+//   * Medidas de sentimiento: en la tabla "SentimentDaily".
+//   * Medidas de anomalia: en la tabla "AnomalyAlerts".
+//
+// Formato:
+//   Los porcentajes estan como FLOAT (ej: 2.5 = 2.5%). Aplicar formato "0.00%"
+//   solo si el modelo los tiene en fraccion (0.025). Nuestras vistas los
+//   devuelven ya multiplicados por 100, asi que usar "0.00" + " %".
+// =============================================================================
+
+
+// --------------------------------------------------------------------------
+// TABLA: KPI_Latest
+// --------------------------------------------------------------------------
+
+// Tiempo desde el ultimo tick recibido (para indicador de salud streaming).
+// Semaforo: verde <5min, amarillo <15min, rojo >=15min.
+Minutes_Since_Last_Tick =
+    SELECTEDVALUE( KPI_Latest[minutes_since_last_tick] )
+
+Stream_Health_Label =
+    VAR m = [Minutes_Since_Last_Tick]
+    RETURN
+        SWITCH(
+            TRUE(),
+            ISBLANK( m ),       "NO DATA",
+            m < 5,              "HEALTHY",
+            m < 15,             "DEGRADED",
+                                "STALE"
+        )
+
+Stream_Health_Color =
+    SWITCH(
+        [Stream_Health_Label],
+        "HEALTHY",  "#16A34A",
+        "DEGRADED", "#F59E0B",
+        "STALE",    "#DC2626",
+                    "#6B7280"
+    )
+
+// Numero de simbolos que registraron al menos un tick en las ultimas 24h.
+Symbols_Active_24h =
+    SELECTEDVALUE( KPI_Latest[symbols_with_ticks_24h], 0 )
+
+// Total de eventos de anomalia detectados en las ultimas 24h (cualquier detector).
+Anomalies_24h =
+    SELECTEDVALUE( KPI_Latest[anomaly_events_24h], 0 )
+
+// Solo las anomalias que pasaron el consenso (z-score AND isolation forest).
+// Estas son las que se envian por Telegram.
+Anomalies_Consensus_24h =
+    SELECTEDVALUE( KPI_Latest[anomaly_events_consensus_24h], 0 )
+
+// Pico de severidad en las ultimas 24h.
+// >=5 critico, >=3 alto, >=1 medio, <1 bajo.
+Max_Severity_24h =
+    SELECTEDVALUE( KPI_Latest[max_severity_24h], 0 )
+
+Max_Severity_Label =
+    VAR s = [Max_Severity_24h]
+    RETURN
+        SWITCH(
+            TRUE(),
+            s >= 5, "CRITICAL",
+            s >= 3, "HIGH",
+            s >= 1, "MEDIUM",
+                    "LOW"
+        )
+
+// Fear & Greed Index ultimo publicado.
+Fear_Greed_Latest =
+    SELECTEDVALUE( KPI_Latest[fng_value] )
+
+Fear_Greed_Label =
+    SELECTEDVALUE( KPI_Latest[fng_bucket], "Unknown" )
+
+// Sentimiento promedio Reddit ultimas 24h (VADER compound, rango [-1, 1]).
+Vader_Compound_24h =
+    SELECTEDVALUE( KPI_Latest[vader_compound_avg_24h], 0 )
+
+// Posts de Reddit procesados por VADER en 24h.
+Reddit_Posts_24h =
+    SELECTEDVALUE( KPI_Latest[reddit_posts_scored_24h], 0 )
+
+// Market cap agregado de todas las monedas trackeadas (USD).
+Total_Market_Cap =
+    SELECTEDVALUE( KPI_Latest[total_market_cap_tracked], 0 )
+
+// Formateo human-friendly para tarjetas (B / T).
+Total_Market_Cap_Formatted =
+    VAR v = [Total_Market_Cap]
+    RETURN
+        SWITCH(
+            TRUE(),
+            v >= 1E12, FORMAT( v / 1E12, "$0.00" ) & "T",
+            v >= 1E9,  FORMAT( v / 1E9,  "$0.00" ) & "B",
+            v >= 1E6,  FORMAT( v / 1E6,  "$0.00" ) & "M",
+                       FORMAT( v, "$#,##0" )
+        )
+
+Refreshed_At =
+    SELECTEDVALUE( KPI_Latest[refreshed_at] )
+
+Refreshed_At_Label =
+    "Ultima actualizacion: " &
+    FORMAT( [Refreshed_At], "yyyy-mm-dd HH:mm" )
+
+
+// --------------------------------------------------------------------------
+// TABLA: PriceHourly
+// --------------------------------------------------------------------------
+
+// Precio de cierre mas reciente para el simbolo seleccionado.
+Price_Close_Latest =
+    CALCULATE(
+        LASTNONBLANKVALUE( PriceHourly[ts_hour], MAX( PriceHourly[price_close] ) )
+    )
+
+// Retorno del ultimo periodo (hora o dia segun el filtro).
+Last_Return_Pct =
+    CALCULATE(
+        LASTNONBLANKVALUE( PriceHourly[ts_hour], MAX( PriceHourly[hour_return_pct] ) )
+    )
+
+// Volatilidad = STDEV de los retornos horarios en el rango filtrado.
+// Util para detectar regimenes de alta volatilidad.
+Volatility_Return_Pct =
+    STDEV.P( PriceHourly[hour_return_pct] )
+
+// Retorno acumulado del periodo filtrado (compound return).
+// Formula: PROD(1 + r_i/100) - 1, expresado en %
+Cumulative_Return_Pct =
+    VAR product =
+        PRODUCTX(
+            VALUES( PriceHourly[ts_hour] ),
+            1 + ( CALCULATE( MAX( PriceHourly[hour_return_pct] ) ) / 100 )
+        )
+    RETURN ( product - 1 ) * 100
+
+// VWAP promedio del periodo (ponderado por ticks).
+Avg_VWAP =
+    DIVIDE(
+        SUMX( PriceHourly, PriceHourly[price_vwap] * PriceHourly[ticks_count] ),
+        SUM( PriceHourly[ticks_count] )
+    )
+
+// Total de ticks en el periodo (indicador de liquidez/actividad).
+Total_Ticks =
+    SUM( PriceHourly[ticks_count] )
+
+
+// --------------------------------------------------------------------------
+// TABLA: AnomalyAlerts
+// --------------------------------------------------------------------------
+
+// Conteo total de alertas en el filtro actual.
+Alerts_Count =
+    COUNTROWS( AnomalyAlerts )
+
+// Alertas por detector (util para mostrar en donut/bar).
+Alerts_Consensus =
+    CALCULATE(
+        COUNTROWS( AnomalyAlerts ),
+        AnomalyAlerts[detector_label] = "Consensus"
+    )
+
+Alerts_ZScore_Only =
+    CALCULATE(
+        COUNTROWS( AnomalyAlerts ),
+        AnomalyAlerts[detector_label] = "Z-score"
+    )
+
+Alerts_IForest_Only =
+    CALCULATE(
+        COUNTROWS( AnomalyAlerts ),
+        AnomalyAlerts[detector_label] = "IForest"
+    )
+
+// Severidad promedio (util para comparar simbolos).
+Avg_Severity =
+    AVERAGE( AnomalyAlerts[severity] )
+
+// Alertas criticas en el filtro (severity >= 5).
+Critical_Alerts =
+    CALCULATE(
+        COUNTROWS( AnomalyAlerts ),
+        AnomalyAlerts[severity] >= 5
+    )
+
+
+// --------------------------------------------------------------------------
+// TABLA: SentimentDaily
+// --------------------------------------------------------------------------
+
+// Sentimiento VADER promedio del periodo.
+Avg_Vader_Compound =
+    AVERAGE( SentimentDaily[vader_compound_avg] )
+
+// Volumen de posts procesados.
+Total_Reddit_Posts =
+    SUM( SentimentDaily[reddit_posts_count] )
+
+// % de posts positivos vs negativos.
+Pct_Positive_Posts =
+    AVERAGE( SentimentDaily[vader_pct_positive] ) * 100
+
+Pct_Negative_Posts =
+    AVERAGE( SentimentDaily[vader_pct_negative] ) * 100
+
+// Fear & Greed promedio del periodo filtrado.
+Avg_Fear_Greed =
+    AVERAGE( SentimentDaily[fng_value] )
+
+// Moneda emocional: correlacion (simple) F&G vs retorno BTC del mismo dia.
+// Nota: para correlacion rigurosa usar Python + calculated table.
+
+
+// --------------------------------------------------------------------------
+// TABLA: MarketSnapshot
+// --------------------------------------------------------------------------
+
+// Suma de market cap de las monedas en el filtro actual.
+MarketCap_Filtered =
+    SUM( MarketSnapshot[market_cap] )
+
+// Promedio de cambio 24h ponderado por market cap.
+// Util para un "indice" sintetico del portafolio trackeado.
+Weighted_Change_24h =
+    DIVIDE(
+        SUMX( MarketSnapshot,
+              MarketSnapshot[market_cap] * MarketSnapshot[change_24h_pct] ),
+        SUM( MarketSnapshot[market_cap] )
+    )
+
+// Numero de monedas subiendo vs bajando en el periodo.
+Coins_Up_24h =
+    CALCULATE(
+        COUNTROWS( MarketSnapshot ),
+        MarketSnapshot[change_24h_pct] > 0
+    )
+
+Coins_Down_24h =
+    CALCULATE(
+        COUNTROWS( MarketSnapshot ),
+        MarketSnapshot[change_24h_pct] < 0
+    )
+
+// Best / worst performer 24h.
+Best_Performer_24h =
+    VAR max_change = MAX( MarketSnapshot[change_24h_pct] )
+    RETURN
+        CALCULATE(
+            FIRSTNONBLANK( MarketSnapshot[coin_name], 1 ),
+            MarketSnapshot[change_24h_pct] = max_change
+        )
+
+Worst_Performer_24h =
+    VAR min_change = MIN( MarketSnapshot[change_24h_pct] )
+    RETURN
+        CALCULATE(
+            FIRSTNONBLANK( MarketSnapshot[coin_name], 1 ),
+            MarketSnapshot[change_24h_pct] = min_change
+        )

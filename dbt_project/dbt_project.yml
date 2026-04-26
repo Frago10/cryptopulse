@@ -1,0 +1,51 @@
+# =============================================================================
+# CryptoPulse — dbt project
+# Medallion: raw (bronze hidratado) -> staging (silver) -> marts (gold)
+# =============================================================================
+name: 'cryptopulse'
+version: '0.1.0'
+config-version: 2
+
+# El perfil vive en ./profiles.yml (o en ~/.dbt/profiles.yml con DBT_PROFILES_DIR)
+profile: 'cryptopulse'
+
+# Rutas relativas al dbt_project/
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# ---- Materializaciones por capa ----
+# Silver -> views (baratas, refrescan en cada run)
+# Gold   -> tables (snapshot estable para BI)
+models:
+  cryptopulse:
+    staging:
+      +materialized: view
+      +schema: staging        # -> schema final: cryptopulse_staging (ver profiles)
+    marts:
+      +materialized: table
+      +schema: marts
+      core:
+        +tags: ["core"]
+      analytics:
+        +tags: ["analytics"]
+
+# ---- Seeds (datos estáticos, como mapping de símbolos) ----
+seeds:
+  cryptopulse:
+    +schema: seeds
+    +quote_columns: false
+
+# ---- Variables globales ----
+vars:
+  # Ventana de datos considerados "recientes" para algunas agregaciones
+  lookback_days: 30
+  # Umbral mínimo de ticks por hora para considerar una barra válida
+  min_ticks_per_hour: 10

@@ -1,0 +1,203 @@
+# =============================================================================
+# Marts — tests, relationships, docs
+# Corre con: dbt test --select marts
+# =============================================================================
+version: 2
+
+models:
+  # ========================= DIMENSIONS =======================================
+  - name: dim_coin
+    description: "Dimensión de monedas. Una fila por coin_id (snapshot más reciente)."
+    columns:
+      - name: coin_key
+        description: "Surrogate key (hash de coin_id)."
+        tests: [not_null, unique]
+      - name: coin_id
+        description: "CoinGecko id canónico: bitcoin, ethereum, ..."
+        tests: [not_null, unique]
+      - name: symbol
+        tests: [not_null]
+      - name: coin_name
+        tests: [not_null]
+
+  - name: dim_date
+    description: "Date spine 2023-01-01 .. 2028-12-31."
+    columns:
+      - name: date_key
+        description: "YYYYMMDD integer key."
+        tests: [not_null, unique]
+      - name: date_day
+        tests: [not_null, unique]
+      - name: day_of_week
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 6
+
+  # ========================= FACTS ============================================
+  - name: fact_prices_hourly
+    description: "OHLCV por moneda por hora desde los ticks de Binance."
+    columns:
+      - name: price_hour_key
+        description: "Surrogate: hash(coin_key, hour)."
+        tests: [not_null, unique]
+      - name: coin_key
+        description: "FK a dim_coin.coin_key."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_coin')
+              field: coin_key
+      - name: date_key
+        description: "FK a dim_date.date_key."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+      - name: event_hour
+        tests: [not_null]
+      - name: open
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: close
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: high
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: ">= low"
+      - name: low
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: ticks_count
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: ">= {{ var('min_ticks_per_hour', 10) }}"
+
+    # PK compuesta lógica: evita dups (coin, hora)
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [coin_key, event_hour]
+
+  - name: fact_market_snapshot
+    description: "Snapshot horario de CoinGecko por moneda."
+    columns:
+      - name: market_snapshot_key
+        tests: [not_null, unique]
+      - name: coin_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_coin')
+              field: coin_key
+      - name: date_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+      - name: current_price
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: market_cap_rank
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 2000
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [coin_key, snapshot_hour]
+
+  - name: fact_sentiment_daily
+    description: "Sentiment agregado por día (FNG + Reddit)."
+    columns:
+      - name: date_key
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+      - name: fng_value
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: reddit_posts_count
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+
+  # ========================= ANALYTICS MARTS ==================================
+  - name: mart_top_movers_daily
+    description: "Top gainers / losers por día (market cap rank <= 200)."
+    columns:
+      - name: date_key
+        tests: [not_null]
+      - name: coin_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_coin')
+              field: coin_key
+      - name: rank_gainer
+        tests: [not_null]
+      - name: rank_loser
+        tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date_key, coin_key]
+
+  - name: mart_social_vs_price
+    description: "Cross entre menciones Reddit y movimiento de precio por día y moneda."
+    columns:
+      - name: date_key
+        tests: [not_null]
+      - name: symbol
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['BTC', 'ETH', 'SOL', 'ADA', 'XRP', 'DOGE']
+      - name: mentions_count
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date_key, symbol]
+
+  - name: mart_anomaly_alerts
+    description: "Horas anómalas por símbolo enriquecidas con market + sentiment context (Fase 5)."
+    columns:
+      - name: symbol
+        tests: [not_null]
+      - name: event_hour
+        tests: [not_null]
+      - name: date_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+      - name: is_anomaly_consensus
+        tests: [not_null]
+      - name: severity_score
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [symbol, event_hour]

@@ -1,0 +1,29 @@
+# =============================================================================
+# dbt profile local — CryptoPulse
+#
+# Usado con DBT_PROFILES_DIR=./ (o copiando este archivo a ~/.dbt/profiles.yml)
+# Uso típico:
+#   cd dbt_project
+#   $env:DBT_PROFILES_DIR="."     # PowerShell
+#   export DBT_PROFILES_DIR=.     # bash
+#   dbt debug
+#
+# Los valores sensibles vienen de env vars para poder commitear este archivo.
+# =============================================================================
+cryptopulse:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host:     "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port:     "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      user:     "{{ env_var('POSTGRES_USER', 'cryptopulse') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'changeme_in_prod') }}"
+      dbname:   "{{ env_var('POSTGRES_DB',   'cryptopulse') }}"
+      # Schema "base" al que dbt antepone los schemas declarados en dbt_project.yml
+      # Los schemas reales quedan: staging, marts, seeds
+      schema:   analytics
+      threads: 4
+      keepalives_idle: 0
+      connect_timeout: 10
+      sslmode: disable

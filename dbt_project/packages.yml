@@ -1,0 +1,8 @@
+# dbt packages — instalar con: `dbt deps`
+packages:
+  # Tests extra (accepted_range, not_accepted_values, expression_is_true, ...)
+  - package: dbt-labs/dbt_utils
+    version: 1.2.0
+  # Macros para dimensiones de fecha y otras utilidades de time-series
+  - package: calogica/dbt_date
+    version: [">=0.10.0", "<0.11.0"]

@@ -1,0 +1,169 @@
+# =============================================================================
+# Staging — tests & docs
+# Los tests corren con: dbt test --select staging
+# =============================================================================
+version: 2
+
+models:
+  # ------------------------ stg_ticks ----------------------------------------
+  - name: stg_ticks
+    description: "Ticks de Binance limpios y enriquecidos con base/quote y spread."
+    columns:
+      - name: symbol
+        description: "Símbolo Binance, e.g. BTCUSDT"
+        tests:
+          - not_null
+          - dbt_utils.not_accepted_values:
+              values: ['', ' ']
+      - name: base_asset
+        description: "Activo base extraído del símbolo (BTC, ETH, ...)"
+        tests: [not_null]
+      - name: event_time
+        tests: [not_null]
+      - name: price
+        description: "Precio > 0 validado en el filtro del modelo."
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: spread
+        description: "ask - bid. No debe ser negativo en mercados saludables."
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+
+  # ------------------------ stg_coingecko_markets -----------------------------
+  - name: stg_coingecko_markets
+    description: "Snapshots por hora del top 100 de CoinGecko."
+    columns:
+      - name: coin_id
+        description: "CoinGecko id, e.g. bitcoin"
+        tests: [not_null]
+      - name: symbol
+        tests: [not_null]
+      - name: current_price
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: market_cap_rank
+        description: "Rank por market cap; esperado entre 1 y ~500."
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 1000
+
+  # ------------------------ stg_fear_greed ------------------------------------
+  - name: stg_fear_greed
+    description: "Fear & Greed deduplicado por día con score normalizado."
+    columns:
+      - name: index_date
+        description: "Fecha del índice (truncada a día), única."
+        tests:
+          - not_null
+          - unique
+      - name: value
+        description: "Valor crudo 0-100."
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: sentiment_bucket
+        description: "Categoría derivada del valor."
+        tests:
+          - accepted_values:
+              values: ['extreme_fear', 'fear', 'neutral', 'greed', 'extreme_greed']
+      - name: sentiment_score
+        description: "Normalizado a [-1, 1]."
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1
+              max_value: 1
+
+  # ------------------------ stg_reddit_posts ----------------------------------
+  - name: stg_reddit_posts
+    description: "Posts de Reddit con flags de mención de tickers."
+    columns:
+      - name: id
+        description: "Reddit post id (PK upstream)."
+        tests:
+          - not_null
+          - unique
+      - name: subreddit
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['cryptocurrency', 'bitcoin', 'ethereum', 'solana']
+      - name: created_utc
+        tests: [not_null]
+      - name: score
+        description: "Upvotes - downvotes; puede ser negativo pero no NULL."
+        tests: [not_null]
+      - name: upvote_ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+
+  # ------------------------ stg_reddit_sentiment (ML) -------------------------
+  - name: stg_reddit_sentiment
+    description: "VADER scores por post (fase 5)."
+    columns:
+      - name: post_id
+        tests: [not_null, unique]
+      - name: compound
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: -1
+              max_value: 1
+      - name: pos
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+      - name: neu
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+      - name: neg
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+      - name: sentiment_label
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['positive', 'neutral', 'negative']
+      - name: sentiment_score
+        description: "Encoding numérico del label: -1 / 0 / 1."
+        tests:
+          - not_null
+          - accepted_values:
+              values: [-1, 0, 1]
+
+  # ------------------------ stg_price_anomalies (ML) --------------------------
+  - name: stg_price_anomalies
+    description: "Detecciones de anomalías por (symbol, event_hour)."
+    columns:
+      - name: symbol
+        tests: [not_null]
+      - name: event_hour
+        tests: [not_null]
+      - name: is_anomaly_zscore
+        tests: [not_null]
+      - name: is_anomaly_iforest
+        tests: [not_null]
+      - name: is_anomaly_consensus
+        tests: [not_null]
+      - name: zscore_threshold
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [symbol, event_hour]

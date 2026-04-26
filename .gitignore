@@ -88,3 +88,7 @@ desktop.ini
 
 # -------- Great Expectations --------
 quality/great_expectations/uncommitted/
+quality/results/
+.venv_sandbox/
+*.pbix
+docs/screenshots/*.tmp
